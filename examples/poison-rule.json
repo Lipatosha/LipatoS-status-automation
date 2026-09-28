@@ -1,0 +1,22 @@
+{
+  "flags": {
+    "lipatos-status-automation": {
+      "rules": {
+        "YOUR_ACTIVITY_ID": {
+          "enabled": true,
+          "name": "Ядовитые когти",
+          "trigger": "hit",
+          "status": "poisoned",
+          "rounds": 2,
+          "timing": "start",
+          "formula": "1d4",
+          "damageType": "poison",
+          "saveAbility": "con",
+          "dc": 12,
+          "success": "end",
+          "prompt": true
+        }
+      }
+    }
+  }
+}
