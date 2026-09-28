@@ -10,6 +10,7 @@ on:
       - examples/**
       - README.md
       - CHANGELOG.md
+      - tests/**
       - .github/workflows/release.yml
   workflow_dispatch:
 
@@ -27,6 +28,7 @@ jobs:
           find scripts -type f -name '*.js' -print0 | xargs -0 -n1 node --check
           node -e 'const m=require("./module.json"); if(m.id!=="lipatos-status-automation"||!m.version||!m.manifest||!m.download)process.exit(1);'
           node -e 'JSON.parse(require("fs").readFileSync("examples/poison-rule.json","utf8"));'
+          node tests/smoke.cjs
       - name: Build ZIP
         run: zip -q -r lipatos-status-automation.zip module.json scripts styles examples README.md CHANGELOG.md
       - name: Publish versioned release
