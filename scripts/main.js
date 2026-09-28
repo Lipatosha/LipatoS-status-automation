@@ -192,7 +192,7 @@ async function applyRule(actor, item, rule, activityId) {
   }
   const combat = game.combat;
   const code = item.uuid + ":" + activityId;
-  const existing = actor.effects.find(e => e.getFlag(ID, "sourceKey") === code);
+  const existing = actor.effects.find(e => e.getFlag(ID, "state")?.sourceKey === code);
   const state = {
     sourceKey: code, sourceActorUuid: item.actor.uuid, sourceItemUuid: item.uuid,
     remaining: rule.rounds, timing: rule.timing, formula: rule.formula,
@@ -201,7 +201,7 @@ async function applyRule(actor, item, rule, activityId) {
     combatId: combat?.id ?? null
   };
   if (existing) {
-    await existing.update({ disabled: false, ["flags." + ID]: state });
+    await existing.update({ disabled: false, ["flags." + ID + ".state"]: state });
     return;
   }
   const status = statusInfo(rule.status);
@@ -210,7 +210,7 @@ async function applyRule(actor, item, rule, activityId) {
     name, img: status?.img ?? status?.icon ?? item.img ?? "icons/svg/aura.svg",
     origin: item.uuid, statuses: rule.status ? [rule.status] : [],
     duration: {}, changes: [],
-    flags: { [ID]: state }
+    flags: { [ID]: { state } }
   }]);
 }
 function actorOwner(actor) {
