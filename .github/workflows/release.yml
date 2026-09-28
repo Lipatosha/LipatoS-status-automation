@@ -27,7 +27,7 @@ jobs:
         run: zip -q -r lipatos-status-automation.zip module.json scripts styles README.md CHANGELOG.md
       - name: Release
         env:
-          GH_TOKEN: \${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           VERSION=$(node -p 'require("./module.json").version')
           TAG="v$VERSION"

@@ -361,13 +361,15 @@ function decorateSheet(app, element) {
 }
 function openWindow(actor) {
   if (!actor) return;
-  const wrapper = document.createElement("div");
-  wrapper.className = "lpsa-window";
-  wrapper.append(viewElement(actor));
   return foundry.applications.api.DialogV2.wait({
     window: { title: "Статусы — " + actor.name },
-    content: wrapper.outerHTML,
+    content: '<div class="lpsa-window"></div>',
     buttons: [{ action: "close", label: "Закрыть", default: true }],
+    render: app => {
+      const container = app.element?.querySelector(".lpsa-window");
+      if (!container) return;
+      container.replaceChildren(viewElement(actor));
+    },
     rejectClose: false
   });
 }
