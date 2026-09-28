@@ -43,6 +43,7 @@ vm.runInContext(code + "\nglobalThis.tests = { cleanRule, applyRule, tickEffect 
 const { cleanRule, applyRule, tickEffect } = sandbox.tests;
 assert.equal(cleanRule({ trigger: "native" }).trigger, "native");
 assert.equal(cleanRule({ formula: "1d4+@abilities.con.mod", rounds: 2 }).rounds, 2);
+assert.equal(cleanRule({ rounds: 0 }).rounds, 0);
 assert.throws(() => cleanRule({ formula: "1d4;alert(1)" }), /формула/);
 
 const actor = {
@@ -98,5 +99,10 @@ const rule = cleanRule({
   await applyRule(actor, item, rule, "attack");
   assert.equal(actor.effects.length, 1, "same source refreshes rather than stacks");
   assert.equal(actor.effects[0].flags[ID].state.remaining, 2);
-  console.log("SMOKE TEST PASSED: rule validation, immunity, damage, dedupe, expiry, refresh.");
+  await applyRule(actor, item, cleanRule({ ...rule, rounds: 0, formula: "" }), "attack");
+  const indefinite = actor.effects[0];
+  await tickEffect(actor, indefinite, indefinite.flags[ID].state, "combat1:3:0:hero:end");
+  assert.equal(actor.effects.length, 1, "indefinite condition persists");
+  await indefinite.delete();
+  console.log("SMOKE TEST PASSED: rule validation, immunity, damage, dedupe, expiry, refresh, indefinite.");
 })().catch(error => { console.error(error); process.exitCode = 1; });

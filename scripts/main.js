@@ -35,7 +35,8 @@ function cleanRule(raw) {
   const input = raw ?? {};
   const formula = String(input.formula ?? "").trim();
   if (formula.length > 120 || (formula && !/^[\w@.+\-*/() \[\]dD]+$/.test(formula))) throw new Error("Недопустимая формула урона.");
-  const rounds = Math.min(1000, Math.max(1, Number.parseInt(input.rounds, 10) || 1));
+  const parsedRounds = Number.parseInt(input.rounds, 10);
+  const rounds = Number.isFinite(parsedRounds) ? Math.min(1000, Math.max(0, parsedRounds)) : 1;
   const dc = Math.min(40, Math.max(1, Number.parseInt(input.dc, 10) || 10));
   return {
     enabled: input.enabled === true || input.enabled === "true" || input.enabled === "on",
@@ -100,7 +101,8 @@ async function configureItem(item) {
       option("native", "При штатном наложении эффекта D&D5e (с учётом спасброска)", rule.trigger)
     ]), "Для способностей со спасброском используй штатное применение эффекта либо режим при использовании.") +
     field("Состояние на цели", select("status", statusOptions)) +
-    field("Количество срабатываний", text("rounds", rule.rounds, "number", 'min="1" max="1000"')) +
+    field("Количество срабатываний", text("rounds", rule.rounds, "number", 'min="0" max="1000"'),
+      "0 — бессрочное состояние, пока его не снимут вручную (например, когда цель встанет).") +
     field("Момент срабатывания", select("timing", [
       option("start", "Начало хода цели", rule.timing),
       option("end", "Конец хода цели", rule.timing),
