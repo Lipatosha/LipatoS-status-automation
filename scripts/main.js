@@ -185,7 +185,7 @@ async function applyRequest(request, senderId) {
 }
 async function applyRule(actor, item, rule, activityId) {
   const conditionImmunities = actor.system?.traits?.ci?.value ?? [];
-  const immunity = conditionImmunities instanceof Set ? conditionImmunities.has(rule.status)
+  const immunity = typeof conditionImmunities?.has === "function" ? conditionImmunities.has(rule.status)
     : Array.isArray(conditionImmunities) && conditionImmunities.includes(rule.status);
   if (rule.status && immunity) {
     ui.notifications.info(actor.name + ": иммунитет к состоянию «" + rule.status + "».");
@@ -232,7 +232,7 @@ async function onNativeEffect(effect) {
   const data = cleanRule(rule);
   const status = data.status;
   const immunities = effect.parent.system?.traits?.ci?.value ?? [];
-  const immune = status && (immunities instanceof Set ? immunities.has(status) :
+  const immune = status && (typeof immunities?.has === "function" ? immunities.has(status) :
     (Array.isArray(immunities) ? immunities.includes(status) : false));
   const combat = game.combat;
   const state = {
