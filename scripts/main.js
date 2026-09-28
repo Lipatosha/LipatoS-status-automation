@@ -80,11 +80,16 @@ function collectStatuses(actor) {
 }
 function statusDuration(effect) {
   if (!effect) return "";
+  let label = "";
   try {
     const parts = effect.getDurationParts?.();
-    if (parts?.length) return parts.filter(Boolean).join(" · ");
+    if (parts?.length) label = parts.filter(Boolean).join(" · ");
   } catch (_) { /* Some effects have no duration formatter */ }
-  return effect.duration?.label ?? "";
+  label = String(label || effect.duration?.label || "").trim();
+  // D&D5e can localize "no duration" to "Нет" even for an active condition.
+  // This is not a countdown, so omit the subtitle instead of displaying it.
+  const none = new Set(["", "нет", "none", "no", "n/a", "—", "-", "отсутствует", "dnd5e.none", "core.none"]);
+  return none.has(label.toLocaleLowerCase()) ? "" : label;
 }
 function viewElement(actor) {
   const view = document.createElement("section");

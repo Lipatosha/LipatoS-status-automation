@@ -13,7 +13,7 @@ const ctx = {console, CONFIG, game, Hooks:{
  once:(name,fn)=>{hooks[name]=fn;}, on:(name,fn)=>{hooks[name]=fn;}
 }};
 vm.createContext(ctx);
-vm.runInContext(fs.readFileSync("scripts/main.js","utf8") + "\nglobalThis.unit={collectStatuses,guardEffect,guardActor,guardToken,conditionName,isPlayer,decorateHud,toggleStatusPanel};",ctx);
+vm.runInContext(fs.readFileSync("scripts/main.js","utf8") + "\nglobalThis.unit={collectStatuses,guardEffect,guardActor,guardToken,conditionName,isPlayer,decorateHud,toggleStatusPanel,statusDuration};",ctx);
 const api=ctx.unit;
 const active={id:"1",name:"Сбит с ног",img:"prone.svg",statuses:new Set(["prone"]),disabled:false,duration:{label:"1 раунд"}};
 const disabled={id:"2",name:"Яд",statuses:new Set(["poisoned"]),disabled:true,duration:{}};
@@ -25,6 +25,11 @@ assert.equal(items.length,3,"one active condition, one ordinary effect, and one 
 assert.equal(items[0].name,"Распластанность");
 assert.equal(items[1].name,"Благословение");
 assert.equal(items[2].name,"Отравлен");
+assert.equal(api.statusDuration({getDurationParts:()=>["Нет"],duration:{label:"Нет"}}),"", "no-duration label is hidden");
+assert.equal(api.statusDuration({getDurationParts:()=>["None"],duration:{label:"None"}}),"", "English no-duration label is hidden");
+assert.equal(api.statusDuration({duration:{label:"2 раунда"}}),"2 раунда", "real duration is preserved");
+assert.equal(api.statusDuration({getDurationParts:()=>["1 раунд","до конца хода"],duration:{}}),"1 раунд · до конца хода");
+
 assert.equal(api.guardEffect({parent:actor}),false);
 assert.equal(api.guardEffect({parent:{documentName:"Item"}}),undefined);
 assert.equal(api.guardActor(actor,{effects:[]}),false);
