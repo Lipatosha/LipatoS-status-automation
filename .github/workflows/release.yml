@@ -1,5 +1,4 @@
-name: Build and publish LipatoS Status Automation
-
+name: Build and publish LipatoS Statuses
 on:
   push:
     branches: [main]
@@ -7,33 +6,28 @@ on:
       - module.json
       - scripts/**
       - styles/**
-      - examples/**
       - README.md
       - CHANGELOG.md
       - tests/**
       - .github/workflows/release.yml
   workflow_dispatch:
-
 permissions:
   contents: write
-
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Validate JavaScript and JSON
+      - uses: actions/checkout@v4
+      - name: Validate
         run: |
-          find scripts -type f -name '*.js' -print0 | xargs -0 -n1 node --check
-          node -e 'const m=require("./module.json"); if(m.id!=="lipatos-status-automation"||!m.version||!m.manifest||!m.download)process.exit(1);'
-          node -e 'JSON.parse(require("fs").readFileSync("examples/poison-rule.json","utf8"));'
+          node --check scripts/main.js
+          node -e 'const m=require("./module.json"); if(m.id!=="lipatos-status-automation"||m.version!=="2.0.0")process.exit(1);'
           node tests/smoke.cjs
-      - name: Build ZIP
-        run: zip -q -r lipatos-status-automation.zip module.json scripts styles examples README.md CHANGELOG.md
-      - name: Publish versioned release
+      - name: Build
+        run: zip -q -r lipatos-status-automation.zip module.json scripts styles README.md CHANGELOG.md
+      - name: Release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: \${{ github.token }}
         run: |
           VERSION=$(node -p 'require("./module.json").version')
           TAG="v$VERSION"
@@ -42,6 +36,6 @@ jobs:
           else
             gh release create "$TAG" lipatos-status-automation.zip module.json \
               --target "$GITHUB_SHA" \
-              --title "LipatoS — Автоматизация состояний $TAG" \
-              --notes "Foundry VTT 14 / D&D5e 6.0.5. Настраиваемые состояния, периодические эффекты, спасброски и обработка ходов."
+              --title "LipatoS — Статусы $TAG" \
+              --notes "Foundry VTT 14 / D&D5e 6.0.5. Статусы только для чтения у игроков, подсказки правил, полный контроль ГМ."
           fi

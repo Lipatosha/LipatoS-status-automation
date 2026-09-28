@@ -1,423 +1,411 @@
-/* LipatoS — Автоматизация состояний и эффектов | Foundry 14 / D&D5e 6.0.5 */
+/* LipatoS — Статусы | Foundry VTT 14 / dnd5e 6.0.5
+ * Read-only player status viewer. All GM controls stay native.
+ */
 const ID = "lipatos-status-automation";
-const CHANNEL = "module." + ID;
-const ABILITIES = ["str", "dex", "con", "int", "wis", "cha"];
-const DAMAGE_TYPES = ["acid", "bludgeoning", "cold", "fire", "force", "lightning", "necrotic", "piercing", "poison", "psychic", "radiant", "slashing", "thunder", "healing"];
-const pending = new Map();
-let turnQueue = Promise.resolve();
-const usedRolls = new WeakSet();
+const views = new Set();
+const descriptions = new Map();
+const tooltip = { element: null, request: 0 };
 
-function report(error) {
-  console.error(ID, error);
-  ui.notifications?.error("LipatoS — Автоэффекты: " + (error?.message ?? String(error)));
-}
+const FALLBACK_RULES = Object.freeze({
+  blinded: "<ul><li>Существо не видит и проваливает проверки, требующие зрения.</li><li>Атаки по существу совершаются с преимуществом, его собственные атаки — с помехой.</li></ul>",
+  charmed: "<ul><li>Не может атаковать очаровавшее его существо или выбирать его целью вредоносных эффектов.</li><li>Очаровавший имеет преимущество на социальные проверки против цели.</li></ul>",
+  deafened: "<ul><li>Существо не слышит и автоматически проваливает проверки, для которых необходим слух.</li></ul>",
+  frightened: "<ul><li>Получает помеху на атаки и проверки характеристик, пока источник страха виден.</li><li>Не может добровольно приблизиться к источнику страха.</li></ul>",
+  grappled: "<ul><li>Скорость становится равна 0.</li><li>Состояние прекращается, если захвативший недееспособен или цель оказывается вне досягаемости захвата.</li></ul>",
+  incapacitated: "<ul><li>Не может совершать действия и реакции.</li></ul>",
+  invisible: "<ul><li>Невидимо без помощи магии или особых чувств; местоположение может быть обнаружено по шуму и следам.</li><li>Атаки по нему совершаются с помехой, его атаки — с преимуществом по правилам 2014 года.</li></ul>",
+  paralyzed: "<ul><li>Недееспособно, не может двигаться и говорить.</li><li>Проваливает спасброски Силы и Ловкости.</li><li>Атаки по цели имеют преимущество; попадания с расстояния до 5 футов считаются критическими.</li></ul>",
+  petrified: "<ul><li>Превращено в неподвижное вещество и недееспособно.</li><li>Не ощущает окружение, проваливает спасброски Силы и Ловкости.</li><li>Атаки по нему имеют преимущество; получает сопротивление всему урону.</li></ul>",
+  poisoned: "<ul><li>Совершает броски атаки и проверки характеристик с помехой.</li></ul>",
+  prone: "<ul><li>Может передвигаться только ползком, пока не встанет.</li><li>Совершает броски атаки с помехой.</li><li>Атаки по нему с расстояния до 5 футов имеют преимущество, остальные — помеху.</li></ul>",
+  restrained: "<ul><li>Скорость становится равна 0.</li><li>Атаки по нему имеют преимущество; его атаки и спасброски Ловкости — с помехой.</li></ul>",
+  stunned: "<ul><li>Недееспособно, не может двигаться, может говорить лишь запинаясь.</li><li>Проваливает спасброски Силы и Ловкости, атаки по нему совершаются с преимуществом.</li></ul>",
+  unconscious: "<ul><li>Недееспособно, не может двигаться, говорить и осознавать окружение.</li><li>Роняет удерживаемые предметы и падает ничком.</li><li>Проваливает спасброски Силы и Ловкости; атаки по нему с преимуществом, попадания в пределах 5 футов критические.</li></ul>"
+});
+
+function isPlayer() { return !!game.user && !game.user.isGM; }
 function esc(value) {
-  return String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  return String(value ?? "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
-function gm() {
-  return game.users.filter(u => u.active && u.isGM).sort((a, b) => a.id.localeCompare(b.id))[0];
+function localize(value) {
+  if (!value) return "";
+  return game.i18n?.has?.(value) ? game.i18n.localize(value) : String(value);
 }
-function isPrimaryGM() { return game.user?.isGM && gm()?.id === game.user.id; }
-function statuses() {
-  const source = CONFIG.statusEffects ?? [];
-  return (Array.isArray(source) ? source : Object.values(source)).filter(s => s && typeof s.id === "string");
+function conditionConfig(id) {
+  return CONFIG.DND5E?.conditionTypes?.[id] ??
+    (Array.isArray(CONFIG.statusEffects)
+      ? CONFIG.statusEffects.find(s => s.id === id)
+      : CONFIG.statusEffects?.[id]) ?? {};
 }
-function statusInfo(id) {
-  return statuses().find(s => s.id === id);
+function conditionName(id) {
+  const info = conditionConfig(id);
+  return localize(info.name ?? info.label ?? id);
 }
-function ruleFor(item, activity) {
-  if (!item) return null;
-  const rules = item.getFlag(ID, "rules") ?? {};
-  const key = activity?.id ?? "default";
-  return rules[key] ?? rules.default ?? null;
+function effectVisible(effect) {
+  if (effect.disabled || effect.duration?.expired || effect.isSuppressed) return false;
+  try { if (effect.isConcealed) return false; } catch (_) { /* Other system model */ }
+  return true;
 }
-function cleanRule(raw) {
-  const input = raw ?? {};
-  const formula = String(input.formula ?? "").trim();
-  if (formula.length > 120 || (formula && !/^[\w@.+\-*/() \[\]dD]+$/.test(formula))) throw new Error("Недопустимая формула урона.");
-  const parsedRounds = Number.parseInt(input.rounds, 10);
-  const rounds = Number.isFinite(parsedRounds) ? Math.min(1000, Math.max(0, parsedRounds)) : 1;
-  const dc = Math.min(40, Math.max(1, Number.parseInt(input.dc, 10) || 10));
-  return {
-    enabled: input.enabled === true || input.enabled === "true" || input.enabled === "on",
-    name: String(input.name ?? "").trim().slice(0, 90),
-    trigger: ["hit", "native"].includes(input.trigger) ? input.trigger : "use",
-    status: statusInfo(input.status) ? input.status : "",
-    rounds,
-    timing: ["start", "end", "sourceStart", "sourceEnd"].includes(input.timing) ? input.timing : "start",
-    formula,
-    damageType: DAMAGE_TYPES.includes(input.damageType) ? input.damageType : "poison",
-    saveAbility: ABILITIES.includes(input.saveAbility) ? input.saveAbility : "",
-    dc,
-    success: ["end", "half", "none", "full"].includes(input.success) ? input.success : "end",
-    prompt: input.prompt === true || input.prompt === "true" || input.prompt === "on"
-  };
-}
-function option(value, label, current) {
-  return '<option value="' + esc(value) + '"' + (value === current ? " selected" : "") + ">" + esc(label) + "</option>";
-}
-function select(name, options) {
-  return '<select name="' + esc(name) + '">' + options.join("") + "</select>";
-}
-function field(label, control, help = "") {
-  return '<label class="lpsa-field"><span>' + esc(label) + "</span>" + control +
-    (help ? '<small>' + esc(help) + "</small>" : "") + "</label>";
-}
-function activities(item) {
-  const list = Array.from(item.system?.activities?.values?.() ?? []);
-  return list.map(a => ({ id: a.id, label: a.name || a.type || a.id }));
-}
-async function configureItem(item) {
-  if (!game.user.isGM) return;
-  const choices = activities(item);
-  let activityId = choices[0]?.id ?? "default";
-  if (choices.length > 1) {
-    const pick = await foundry.applications.api.DialogV2.input({
-      window: { title: "Автоэффекты — " + item.name },
-      content: field("Действие предмета", select("activityId", choices.map(a => option(a.id, a.label, activityId)))),
-      ok: { label: "Настроить" }, rejectClose: false
-    });
-    if (!pick) return;
-    activityId = String(pick.activityId);
+function collectStatuses(actor) {
+  const entries = [];
+  const seen = new Set();
+  if (!actor) return entries;
+  for (const effect of actor.effects ?? []) {
+    if (!effectVisible(effect)) continue;
+    const ids = Array.from(effect.statuses ?? []).filter(Boolean);
+    if (!ids.length) {
+      entries.push({ key: "effect:" + effect.id, statusId: "", name: effect.name,
+        img: effect.img, effect, source: "", description: effect.description ?? "" });
+      continue;
+    }
+    for (const id of ids) {
+      seen.add(id);
+      const cfg = conditionConfig(id);
+      entries.push({ key: "status:" + id + ":" + effect.id, statusId: id,
+        name: conditionName(id), img: cfg.img ?? cfg.icon ?? effect.img,
+        effect, source: effect.name === conditionName(id) ? "" : effect.name,
+        description: effect.description ?? "" });
+    }
   }
-  const old = item.getFlag(ID, "rules")?.[activityId] ?? {};
-  const rule = cleanRule({ rounds: 2, name: item.name, prompt: true, ...old });
-  const statusOptions = [option("", "Без состояния", rule.status)].concat(
-    statuses().map(s => option(s.id, game.i18n.localize(s.name ?? s.label ?? s.id), rule.status))
-  );
-  const typeOptions = DAMAGE_TYPES.map(type =>
-    option(type, game.i18n.localize(CONFIG.DND5E?.damageTypes?.[type]?.label ?? type), rule.damageType));
-  const saveOptions = [option("", "Без спасброска", rule.saveAbility)].concat(
-    ABILITIES.map(a => option(a, game.i18n.localize(CONFIG.DND5E?.abilities?.[a]?.label ?? a), rule.saveAbility)));
-  const check = (key, checked) => '<input name="' + key + '" type="checkbox"' + (checked ? " checked" : "") + ">";
-  const text = (key, val, type = "text", attrs = "") =>
-    '<input name="' + key + '" type="' + type + '" value="' + esc(val) + '" ' + attrs + ">";
-  const content = '<div class="lpsa-editor">' +
-    field("Включить автоматизацию", check("enabled", rule.enabled)) +
-    field("Название эффекта", text("name", rule.name)) +
-    field("Условие наложения", select("trigger", [
-      option("use", "При использовании действия (без проверки попадания)", rule.trigger),
-      option("hit", "После броска атаки при попадании", rule.trigger),
-      option("native", "При штатном наложении эффекта D&D5e (с учётом спасброска)", rule.trigger)
-    ]), "Для способностей со спасброском используй штатное применение эффекта либо режим при использовании.") +
-    field("Состояние на цели", select("status", statusOptions)) +
-    field("Количество срабатываний", text("rounds", rule.rounds, "number", 'min="0" max="1000"'),
-      "0 — бессрочное состояние, пока его не снимут вручную (например, когда цель встанет).") +
-    field("Момент срабатывания", select("timing", [
-      option("start", "Начало хода цели", rule.timing),
-      option("end", "Конец хода цели", rule.timing),
-      option("sourceStart", "Начало хода источника", rule.timing),
-      option("sourceEnd", "Конец хода источника", rule.timing)
-    ])) +
-    field("Формула урона / лечения", text("formula", rule.formula, "text", 'placeholder="1d4"'),
-      "Пустая формула — только состояние. Используются обычные формулы кубиков Foundry.") +
-    field("Тип", select("damageType", typeOptions)) +
-    field("Повторный спасбросок", select("saveAbility", saveOptions)) +
-    field("Сложность спасброска", text("dc", rule.dc, "number", 'min="1" max="40"')) +
-    field("При успешном спасброске", select("success", [
-      option("end", "Снять эффект до нанесения урона", rule.success),
-      option("half", "Половина урона; эффект остаётся", rule.success),
-      option("none", "Без урона; эффект остаётся", rule.success),
-      option("full", "Полный урон; эффект остаётся", rule.success)
-    ])) +
-    field("Показывать окно перед срабатыванием", check("prompt", rule.prompt)) +
-    '<p class="notes">Отдельные источники не удаляют друг у друга одноимённые состояния. Вся обработка изменений выполняется ведущим ГМ.</p></div>';
-  const data = await foundry.applications.api.DialogV2.input({
-    window: { title: "Автоэффекты — " + item.name + " / " + (choices.find(a => a.id === activityId)?.label ?? "Предмет") },
-    position: { width: 530 }, content, ok: { label: "Сохранить" }, rejectClose: false
-  });
-  if (!data) return;
-  try {
-    const fresh = cleanRule(data);
-    await item.update({ ["flags." + ID + ".rules." + activityId]: fresh });
-    ui.notifications.info("LipatoS: автоматизация сохранена для «" + item.name + "».");
-  } catch (error) { report(error); }
+  // A system or module may expose derived statuses without a dedicated actor effect.
+  for (const id of actor.statuses ?? []) {
+    if (seen.has(id)) continue;
+    const cfg = conditionConfig(id);
+    entries.push({ key: "derived:" + id, statusId: id, name: conditionName(id),
+      img: cfg.img ?? cfg.icon ?? "icons/svg/aura.svg", effect: null, source: "", description: "" });
+  }
+  return entries;
 }
-function insertButton(app, element) {
-  const item = app.document ?? app.object;
-  if (item?.documentName !== "Item" || !game.user?.isGM) return;
-  const root = element?.jquery ? element[0] : element;
-  if (!root?.querySelector) return;
-  const header = root.querySelector(".window-header");
-  if (!header || header.querySelector(".lpsa-header")) return;
+function statusDuration(effect) {
+  if (!effect) return "";
+  try {
+    const parts = effect.getDurationParts?.();
+    if (parts?.length) return parts.filter(Boolean).join(" · ");
+  } catch (_) { /* Some effects have no duration formatter */ }
+  return effect.duration?.label ?? "";
+}
+function viewElement(actor) {
+  const view = document.createElement("section");
+  view.className = "lpsa-status-view";
+  view._lpsaActor = actor;
+  views.add(view);
+  renderView(view);
+  return view;
+}
+function renderView(view) {
+  const actor = view._lpsaActor;
+  const statuses = collectStatuses(actor);
+  view.replaceChildren();
+  const header = document.createElement("h3");
+  header.className = "lpsa-list-title";
+  header.textContent = "Активные статусы";
+  view.append(header);
+  if (!statuses.length) {
+    const empty = document.createElement("p");
+    empty.className = "lpsa-empty";
+    empty.textContent = "На персонаже нет активных статусов.";
+    view.append(empty);
+    return;
+  }
+  const list = document.createElement("ul");
+  list.className = "lpsa-list";
+  for (const entry of statuses) {
+    const row = document.createElement("li");
+    row.className = "lpsa-status-row";
+    row.tabIndex = 0;
+    row.setAttribute("aria-label", entry.name);
+    const icon = document.createElement("img");
+    icon.className = "lpsa-status-icon";
+    icon.src = entry.img || "icons/svg/aura.svg";
+    icon.alt = "";
+    const text = document.createElement("span");
+    text.className = "lpsa-status-text";
+    const name = document.createElement("strong");
+    name.textContent = entry.name;
+    text.append(name);
+    if (entry.source) {
+      const source = document.createElement("small");
+      source.textContent = entry.source;
+      text.append(source);
+    }
+    const duration = statusDuration(entry.effect);
+    if (duration) {
+      const d = document.createElement("small");
+      d.className = "lpsa-duration";
+      d.textContent = duration;
+      text.append(d);
+    }
+    row.append(icon, text);
+    row.addEventListener("mouseenter", event => showTooltip(entry, event));
+    row.addEventListener("focus", event => showTooltip(entry, event));
+    row.addEventListener("mousemove", positionTooltip);
+    row.addEventListener("mouseleave", hideTooltip);
+    row.addEventListener("blur", hideTooltip);
+    list.append(row);
+  }
+  view.append(list);
+}
+function refreshViews(actor) {
+  for (const view of views) {
+    if (!view.isConnected) { views.delete(view); continue; }
+    if (!actor || view._lpsaActor?.uuid === actor.uuid) renderView(view);
+  }
+}
+function normalizeRules(html) {
+  const holder = document.createElement("div");
+  holder.innerHTML = html;
+  if (isPlayer()) holder.querySelectorAll(".secret, [data-secret], script, iframe, object").forEach(el => el.remove());
+  return holder.innerHTML;
+}
+async function rulesDescription(entry) {
+  const cfg = conditionConfig(entry.statusId);
+  const reference = cfg.reference;
+  if (reference) {
+    let result = descriptions.get(reference);
+    if (!result) {
+      result = (async () => {
+        try {
+          const doc = await fromUuid(reference);
+          if (!doc || (doc.testUserPermission && !doc.testUserPermission(game.user, "OBSERVER"))) return "";
+          const html = doc.text?.content ?? doc.content ?? "";
+          if (!html) return "";
+          return await foundry.applications.ux.TextEditor.implementation.enrichHTML(
+            html, { async: true, secrets: game.user.isGM, documents: true, links: true });
+        } catch (error) {
+          console.warn(ID, "Не удалось загрузить описание состояния", reference, error);
+          return "";
+        }
+      })();
+      descriptions.set(reference, result);
+    }
+    const resultHtml = await result;
+    if (resultHtml) return normalizeRules(resultHtml);
+  }
+  if (entry.statusId && FALLBACK_RULES[entry.statusId]) return FALLBACK_RULES[entry.statusId];
+  if (entry.description) {
+    try {
+      const html = await foundry.applications.ux.TextEditor.implementation.enrichHTML(
+        entry.description, { async: true, secrets: game.user.isGM, documents: true, links: true });
+      return normalizeRules(html);
+    } catch (_) { /* Keep text fallback */ }
+    return "<p>" + esc(entry.description.replace(/<[^>]*>/g, " ")) + "</p>";
+  }
+  return "<p>Описание отсутствует.</p>";
+}
+function tooltipElement() {
+  if (tooltip.element?.isConnected) return tooltip.element;
+  const el = document.createElement("aside");
+  el.className = "lpsa-tooltip";
+  el.setAttribute("role", "tooltip");
+  el.hidden = true;
+  document.body.append(el);
+  tooltip.element = el;
+  return el;
+}
+function positionTooltip(event) {
+  const el = tooltip.element;
+  if (!el || el.hidden) return;
+  const x = Number.isFinite(event.clientX) ? event.clientX : window.innerWidth / 2;
+  const y = Number.isFinite(event.clientY) ? event.clientY : window.innerHeight / 2;
+  const width = Math.min(390, window.innerWidth - 20);
+  const left = Math.max(10, Math.min(x + 18, window.innerWidth - width - 10));
+  const top = Math.max(10, Math.min(y + 12, window.innerHeight - Math.min(el.offsetHeight, window.innerHeight - 20) - 10));
+  el.style.left = left + "px";
+  el.style.top = top + "px";
+}
+async function showTooltip(entry, event) {
+  const serial = ++tooltip.request;
+  const el = tooltipElement();
+  el.innerHTML = '<div class="lpsa-tooltip-header"><strong>' + esc(entry.name) +
+    '</strong><span>Состояние</span></div><div class="lpsa-tooltip-body">Загрузка описания…</div>';
+  el.hidden = false;
+  positionTooltip(event);
+  const body = el.querySelector(".lpsa-tooltip-body");
+  const html = await rulesDescription(entry);
+  if (serial !== tooltip.request || !el.isConnected) return;
+  body.innerHTML = html;
+  positionTooltip(event);
+}
+function hideTooltip() {
+  tooltip.request++;
+  if (tooltip.element) tooltip.element.hidden = true;
+}
+function placePanel(panel, anchor) {
+  if (!panel || !anchor) return;
+  const rect = anchor.getBoundingClientRect();
+  const width = Math.min(320, window.innerWidth - 24);
+  panel.style.left = Math.max(12, Math.min(rect.right + 8, window.innerWidth - width - 12)) + "px";
+  panel.style.top = Math.max(12, Math.min(rect.top, window.innerHeight - Math.min(panel.offsetHeight || 300, window.innerHeight - 24) - 12)) + "px";
+}
+function decorateHud(hud, supplied) {
+  if (!isPlayer()) return;
+  const root = supplied?.jquery ? supplied[0] : supplied ?? hud.element;
+  const actor = hud.actor ?? hud.object?.actor;
+  if (!root?.querySelector || !actor) return;
+  if (root.querySelector(".lpsa-status-button")) return;
+  const original = root.querySelector(
+    '[data-palette="effects"],[data-palette="status"],[data-palette="statuses"],' +
+    '[data-action="toggleEffects"],[data-action="toggleStatusEffects"],' +
+    '.control-icon[data-action="effects"],.control-icon[data-action="status"]'
+  );
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "lpsa-header";
-  button.title = "Автоматизация состояний";
-  button.innerHTML = '<i class="fas fa-skull-crossbones"></i><span> Автоэффекты</span>';
-  button.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); configureItem(item).catch(report); });
-  header.insertBefore(button, header.querySelector(".window-controls") ?? null);
-}
-function getTargets() {
-  return Array.from(game.user.targets ?? []).map(t => t.document?.uuid ?? t.uuid).filter(Boolean);
-}
-function sendRequest(item, activity, trigger, total, natural) {
-  const rule = ruleFor(item, activity);
-  if (!rule?.enabled || rule.trigger !== trigger) return;
-  const targets = getTargets();
-  if (!targets.length) {
-    ui.notifications.warn("LipatoS: сперва выбери цель клавишей T.");
-    return;
-  }
-  const request = { type: "apply", userId: game.user.id, itemUuid: item.uuid,
-    activityId: activity?.id ?? "default", trigger, targets, total, natural };
-  if (isPrimaryGM()) return applyRequest(request, game.user.id).catch(report);
-  if (!gm()) return ui.notifications.warn("LipatoS: для автоматизации требуется активный ГМ.");
-  game.socket.emit(CHANNEL, request);
-}
-async function applyRequest(request, senderId) {
-  if (!isPrimaryGM() || request.userId !== senderId) return;
-  const user = game.users.get(senderId);
-  const item = await fromUuid(request.itemUuid);
-  if (!user || item?.documentName !== "Item" || !item.actor?.testUserPermission(user, "OWNER")) return;
-  const activity = item.system?.activities?.get?.(request.activityId) ?? null;
-  const rule = ruleFor(item, activity);
-  if (!rule?.enabled || rule.trigger !== request.trigger) return;
-  if (request.trigger === "hit" && (!Number.isFinite(request.total) || !Number.isInteger(request.natural))) return;
-  for (const uuid of [...new Set(request.targets ?? [])].slice(0, 30)) {
-    const target = await fromUuid(uuid);
-    const actor = target?.actor ?? (target?.documentName === "Actor" ? target : null);
-    if (!actor) continue;
-    if (request.trigger === "hit") {
-      const ac = Number(actor.system?.attributes?.ac?.value);
-      if (!Number.isFinite(ac) || (request.natural !== 20 && (request.natural === 1 || request.total < ac))) continue;
+  button.className = "lpsa-status-button control-icon";
+  button.setAttribute("aria-label", "Статусы");
+  button.setAttribute("data-tooltip", "Статусы");
+  button.innerHTML = '<i class="fas fa-shield-heart" inert></i><span>Статусы</span>';
+  const panel = document.createElement("div");
+  panel.className = "lpsa-hud-panel";
+  panel.hidden = true;
+  panel.append(viewElement(actor));
+  button.addEventListener("click", event => {
+    event.preventDefault();
+    event.stopPropagation();
+    const show = panel.hidden;
+    panel.hidden = !show;
+    hideTooltip();
+    if (show) {
+      renderView(panel.querySelector(".lpsa-status-view"));
+      placePanel(panel, button);
     }
-    await applyRule(actor, item, rule, request.activityId);
-  }
-}
-async function applyRule(actor, item, rule, activityId) {
-  const conditionImmunities = actor.system?.traits?.ci?.value ?? [];
-  const immunity = typeof conditionImmunities?.has === "function" ? conditionImmunities.has(rule.status)
-    : Array.isArray(conditionImmunities) && conditionImmunities.includes(rule.status);
-  if (rule.status && immunity) {
-    ui.notifications.info(actor.name + ": иммунитет к состоянию «" + rule.status + "».");
-  }
-  const safeStatus = immunity ? "" : rule.status;
-  const combat = game.combat;
-  const code = item.uuid + ":" + activityId;
-  const existing = actor.effects.find(e => e.getFlag(ID, "state")?.sourceKey === code);
-  const state = {
-    sourceKey: code, sourceActorUuid: item.actor.uuid, sourceItemUuid: item.uuid,
-    remaining: rule.rounds, timing: rule.timing, formula: rule.formula,
-    damageType: rule.damageType, saveAbility: rule.saveAbility, dc: rule.dc,
-    success: rule.success, prompt: rule.prompt, lastEdge: "",
-    combatId: combat?.id ?? null
-  };
-  if (existing) {
-    await existing.update({ disabled: false, ["flags." + ID + ".state"]: state });
-    return;
-  }
-  const status = statusInfo(safeStatus);
-  const name = rule.name || item.name;
-  await actor.createEmbeddedDocuments("ActiveEffect", [{
-    name, img: status?.img ?? status?.icon ?? item.img ?? "icons/svg/aura.svg",
-    origin: item.uuid, statuses: safeStatus ? [safeStatus] : [],
-    duration: {}, changes: [],
-    flags: { [ID]: { state } }
-  }]);
-}
-
-async function onNativeEffect(effect) {
-  if (!isPrimaryGM() || effect.parent?.documentName !== "Actor" || effect.getFlag(ID, "state")) return;
-  const origin = effect.system?.origin ?? {};
-  const itemRef = origin.item || effect.origin;
-  if (!itemRef || typeof itemRef !== "string") return;
-  const resolved = await fromUuid(itemRef);
-  const item = resolved?.documentName === "Item" ? resolved : resolved?.item;
-  if (!item?.actor) return;
-  const activityRef = origin.activity;
-  const activityId = typeof activityRef === "string" ? activityRef.split(".").at(-1) : "default";
-  const rules = item.getFlag(ID, "rules") ?? {};
-  let rule = rules[activityId] ?? rules.default;
-  if (!rule && Object.keys(rules).length === 1) rule = Object.values(rules)[0];
-  if (!rule?.enabled || rule.trigger !== "native") return;
-  const data = cleanRule(rule);
-  const status = data.status;
-  const immunities = effect.parent.system?.traits?.ci?.value ?? [];
-  const immune = status && (typeof immunities?.has === "function" ? immunities.has(status) :
-    (Array.isArray(immunities) ? immunities.includes(status) : false));
-  const combat = game.combat;
-  const state = {
-    sourceKey: item.uuid + ":" + activityId, sourceActorUuid: item.actor.uuid,
-    sourceItemUuid: item.uuid, remaining: data.rounds, timing: data.timing,
-    formula: data.formula, damageType: data.damageType, saveAbility: data.saveAbility,
-    dc: data.dc, success: data.success, prompt: data.prompt, lastEdge: "",
-    combatId: combat?.id ?? null
-  };
-  const patch = { ["flags." + ID + ".state"]: state };
-  if (status && !immune && !effect.statuses?.has(status)) patch.statuses = [...(effect.statuses ?? []), status];
-  await effect.update(patch);
-}
-
-function actorOwner(actor) {
-  return game.users.filter(u => u.active && !u.isGM && actor.testUserPermission(u, "OWNER"))
-    .sort((a, b) => a.id.localeCompare(b.id))[0] ?? null;
-}
-async function askPlayer(actor, effect, data) {
-  const owner = actorOwner(actor);
-  if (!owner || !game.socket) return false;
-  const requestId = foundry.utils.randomID();
-  const result = new Promise(resolve => {
-    const timer = setTimeout(() => {
-      pending.delete(requestId);
-      resolve(null);
-    }, 45000);
-    pending.set(requestId, { userId: owner.id, actorUuid: actor.uuid, resolve: value => {
-      clearTimeout(timer); pending.delete(requestId); resolve(value);
-    } });
   });
-  game.socket.emit(CHANNEL, { type: "prompt", recipient: owner.id, requestId,
-    actorUuid: actor.uuid, effectName: effect.name, formula: data.formula,
-    damageType: data.damageType, ability: data.saveAbility, dc: data.dc });
-  const reply = await result;
-  return reply === true;
+  button.addEventListener("contextmenu", event => event.preventDefault());
+  if (original) original.replaceWith(button);
+  else (root.querySelector(".col.right, .right") ?? root).append(button);
+  root.append(panel);
+  // The original palette is never an editor for a player, including alternate HUD bindings.
+  root.querySelectorAll(".status-effects").forEach(node => { node.hidden = true; });
 }
-async function handlePrompt(message) {
-  if (message.recipient !== game.user.id || game.user.isGM) return;
-  const actor = await fromUuid(message.actorUuid);
-  if (!actor?.testUserPermission(game.user, "OWNER")) return;
-  const content = '<p><strong>' + esc(actor.name) + " — " + esc(message.effectName) +
-    '</strong></p><p>' + (message.ability
-      ? "Спасбросок " + esc(game.i18n.localize(CONFIG.DND5E?.abilities?.[message.ability]?.label ?? message.ability)) +
-        ", Сл " + esc(message.dc) + "."
-      : "Срабатывает периодический эффект.") + "</p>" +
-    (message.formula ? "<p>Формула: " + esc(message.formula) + " (" + esc(message.damageType) + ")</p>" : "");
-  const reply = await foundry.applications.api.DialogV2.wait({
-    window: { title: "LipatoS — Периодический эффект" },
-    content, modal: true, rejectClose: false,
-    buttons: [{ action: "ok", label: message.ability ? "Продолжить к спасброску" : "Продолжить", default: true,
-      callback: () => true }]
-  });
-  game.socket.emit(CHANNEL, { type: "promptReply", requestId: message.requestId, userId: game.user.id,
-    actorUuid: message.actorUuid, accepted: reply === true });
-}
-async function onSocket(message, senderId) {
-  if (!message || typeof message !== "object") return;
-  if (message.type === "prompt") return handlePrompt(message).catch(report);
-  if (message.type === "promptReply" && isPrimaryGM()) {
-    const p = pending.get(message.requestId);
-    if (p && p.userId === message.userId && p.actorUuid === message.actorUuid &&
-        (!senderId || senderId === message.userId)) p.resolve(message.accepted === true);
-  }
-  if (message.type === "apply" && isPrimaryGM()) {
-    if (senderId && senderId !== message.userId) return;
-    await applyRequest(message, senderId ?? message.userId);
-  }
-}
-async function rollSave(actor, ability, dc) {
-  const rolls = await actor.rollSavingThrow({ ability, target: dc }, { configure: false });
-  if (!rolls?.length || !Number.isFinite(rolls[0]?.total)) return null;
-  return rolls[0].total >= dc;
-}
-async function tickEffect(actor, effect, state, edge) {
-  if (!effect.parent || effect.disabled) return;
-  const current = effect.getFlag(ID, "state");
-  if (!current || current.lastEdge === edge || current.remaining <= 0) return;
-  // Claim the edge before any asynchronous dialog so a duplicated hook cannot deal damage twice.
-  await effect.update({ ["flags." + ID + ".state.lastEdge"]: edge });
-  const prompt = !!current.prompt;
-  if (prompt) await askPlayer(actor, effect, current);
-  let multiplier = 1;
-  if (current.saveAbility) {
-    const success = await rollSave(actor, current.saveAbility, Number(current.dc));
-    if (success === null) {
-      ui.notifications.warn("LipatoS: спасбросок отменён; эффект «" + effect.name + "» не обработан.");
-      await effect.update({ ["flags." + ID + ".state.lastEdge"]: "" });
-      return;
+function installHud() {
+  const Parent = CONFIG.Token?.hudClass;
+  if (!Parent || Parent._lpsaLocked) return;
+  const inherited = Parent.DEFAULT_OPTIONS?.actions?.effect;
+  const handler = typeof inherited === "function" ? inherited : inherited?.handler;
+  class PlayerStatusHUD extends Parent {
+    static _lpsaLocked = true;
+    static DEFAULT_OPTIONS = {
+      actions: {
+        effect: {
+          buttons: [0, 2],
+          handler(event, target) {
+            if (isPlayer()) { event.preventDefault(); event.stopPropagation(); return; }
+            return handler?.call(this, event, target);
+          }
+        }
+      }
+    };
+    _getStatusEffectChoices() {
+      const choices = super._getStatusEffectChoices();
+      if (!isPlayer()) return choices;
+      return Object.fromEntries(Object.entries(choices).filter(([id, status]) =>
+        status.isActive || this.actor?.statuses?.has(id)));
     }
-    if (success) {
-      if (current.success === "end") {
-        await effect.delete();
-        await ChatMessage.create({ content: esc(actor.name) + ": эффект «" + esc(effect.name) +
-          "» завершён успешным спасброском.", speaker: ChatMessage.getSpeaker({ actor }) });
+    togglePalette(palette, active) {
+      if (isPlayer() && /effect|status/i.test(String(palette))) {
+        decorateHud(this);
+        const button = this.element?.querySelector(".lpsa-status-button");
+        if (button && active !== false) button.click();
+        else if (active === false) {
+          const panel = this.element?.querySelector(".lpsa-hud-panel");
+          if (panel) panel.hidden = true;
+        }
         return;
       }
-      if (current.success === "half") multiplier = 0.5;
-      if (current.success === "none") multiplier = 0;
+      return super.togglePalette(palette, active);
+    }
+    async _onRender(context, options) {
+      await super._onRender(context, options);
+      decorateHud(this);
     }
   }
-  if (current.formula && multiplier !== 0) {
-    const roll = await new Roll(current.formula, actor.getRollData()).evaluate();
-    await roll.toMessage({ speaker: ChatMessage.getSpeaker({ actor }),
-      flavor: esc(effect.name) + " — " + esc(actor.name) + " (" + esc(current.damageType) + ")" });
-    const value = Math.floor(roll.total * multiplier);
-    if (value > 0 && typeof actor.applyDamage === "function") {
-      await actor.applyDamage([{ value, type: current.damageType, properties: new Set() }]);
-    }
-  }
-  const remaining = Number(current.remaining) - 1;
-  if (remaining <= 0) {
-    await effect.delete();
-    await ChatMessage.create({ content: esc(actor.name) + ": эффект «" + esc(effect.name) +
-      "» завершился.", speaker: ChatMessage.getSpeaker({ actor }) });
-  } else await effect.update({ ["flags." + ID + ".state.remaining"]: remaining });
+  CONFIG.Token.hudClass = PlayerStatusHUD;
 }
-async function processEdge(combat, combatant, edgeName, round, turn) {
-  if (!combatant?.actor) return;
-  const actor = combatant.actor;
-  const edge = [combat.id, round, turn, combatant.id, edgeName].join(":");
-  for (const target of combat.combatants) {
-    const afflicted = target.actor;
-    if (!afflicted) continue;
-    for (const effect of Array.from(afflicted.effects)) {
-      const state = effect.getFlag(ID, "state");
-      if (!state || state.combatId && state.combatId !== combat.id) continue;
-      const sourceEdge = state.timing === "sourceStart" || state.timing === "sourceEnd";
-      const matches = sourceEdge ? state.sourceActorUuid === actor.uuid : afflicted.uuid === actor.uuid;
-      if (!matches) continue;
-      const wanted = state.timing.endsWith("End") || state.timing === "end" ? "end" : "start";
-      if (wanted !== edgeName) continue;
-      try { await tickEffect(afflicted, effect, state, edge); } catch (error) { report(error); }
-    }
+function renameNav(root) {
+  const nodes = root.querySelectorAll(
+    '.tabs [data-tab="effects"],.sheet-tabs [data-tab="effects"],[data-action="tab"][data-tab="effects"]');
+  for (const nav of nodes) {
+    if (nav.closest(".lpsa-status-view") || nav.matches(".tab")) continue;
+    const label = nav.querySelector("span.label,span.title,span:not(.icon)") ?? nav;
+    if (label === nav) {
+      for (const child of [...nav.childNodes]) if (child.nodeType === 3 && child.textContent.trim()) {
+        child.textContent = " Статусы"; break;
+      }
+      if (!nav.textContent.includes("Статусы")) nav.textContent = "Статусы";
+    } else label.textContent = "Статусы";
+    nav.setAttribute("aria-label", "Статусы");
   }
 }
-async function onCombatChange(combat, changed) {
-  if (!isPrimaryGM() || !Object.hasOwn(changed, "round") && !Object.hasOwn(changed, "turn")) return;
-  if (!combat.started) return;
-  const before = combat.previous;
-  if (before?.combatantId) {
-    const previous = combat.combatants.get(before.combatantId);
-    await processEdge(combat, previous, "end", before.round ?? combat.round, before.turn ?? combat.turn);
+function decorateSheet(app, element) {
+  if (!isPlayer()) return;
+  const actor = app.document ?? app.object;
+  if (actor?.documentName !== "Actor") return;
+  const root = element?.jquery ? element[0] : element ?? app.element;
+  if (!root?.querySelector) return;
+  renameNav(root);
+  const tab = [...root.querySelectorAll('.tab[data-tab="effects"]')].find(e =>
+    !e.matches("button,a") && !e.closest(".tabs,.sheet-tabs"));
+  if (tab) {
+    tab.replaceChildren(viewElement(actor));
+    return;
   }
-  await processEdge(combat, combat.combatant, "start", combat.round, combat.turn);
+  // Fallback for custom sheets which do not expose the standard effects tab.
+  const header = root.querySelector(".window-header");
+  if (!header || header.querySelector(".lpsa-sheet-button")) return;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "lpsa-sheet-button";
+  button.textContent = "Статусы";
+  button.addEventListener("click", () => openWindow(actor));
+  header.insertBefore(button, header.querySelector(".window-controls") ?? null);
+}
+function openWindow(actor) {
+  if (!actor) return;
+  const wrapper = document.createElement("div");
+  wrapper.className = "lpsa-window";
+  wrapper.append(viewElement(actor));
+  return foundry.applications.api.DialogV2.wait({
+    window: { title: "Статусы — " + actor.name },
+    content: wrapper.outerHTML,
+    buttons: [{ action: "close", label: "Закрыть", default: true }],
+    rejectClose: false
+  });
+}
+function guardEffect(effect) {
+  if (!isPlayer()) return;
+  // Actor effects are GM-managed; non-actor item effects are not touched.
+  if (effect?.parent?.documentName === "Actor") return false;
+}
+function guardActor(actor, changes) {
+  if (!isPlayer()) return;
+  if (Object.keys(changes ?? {}).some(k => k === "effects" || k.startsWith("effects."))) return false;
+}
+function guardToken(token, changes) {
+  if (!isPlayer()) return;
+  const keys = Object.keys(changes ?? {});
+  if (keys.some(k => /^(?:effects|overlayEffect)(?:\.|$)/.test(k) ||
+      /^flags\.core\.(?:statusId|overlayEffect)(?:\.|$)/.test(k))) return false;
+  if ("overlayEffect" in (changes ?? {}) || "effects" in (changes ?? {})) return false;
+  if ("statusId" in (changes?.flags?.core ?? {}) || "overlayEffect" in (changes?.flags?.core ?? {})) return false;
 }
 Hooks.once("init", () => {
-  game.modules.get(ID).api = {
-    configureItem,
-    apply: async (actor, item, override, activityId = "default") => {
-      if (!isPrimaryGM()) throw new Error("Применение эффектов разрешено только ведущему ГМ.");
-      return applyRule(actor, item, cleanRule({ enabled: true, rounds: 2, ...override }), activityId);
-    }
-  };
+  const module = game.modules.get(ID);
+  if (module) module.api = { list: collectStatuses, open: openWindow };
 });
-Hooks.once("ready", () => {
-  game.socket.on(CHANNEL, (message, userId) => onSocket(message, userId).catch(report));
+Hooks.once("setup", installHud);
+Hooks.on("renderTokenHUD", (app, element) => decorateHud(app, element));
+Hooks.on("renderActorSheetV2", decorateSheet);
+Hooks.on("renderActorSheet", decorateSheet);
+Hooks.on("renderApplicationV2", (app, element) => {
+  if (app.document?.documentName === "Actor") decorateSheet(app, element);
 });
-Hooks.on("getHeaderControlsApplicationV2", (app, controls) => {
-  const item = app.document ?? app.object;
-  if (item?.documentName === "Item" && game.user?.isGM) {
-    controls.push({ action: "lipatos-status-automation", label: "Автоэффекты",
-      icon: "fas fa-skull-crossbones", onClick: () => configureItem(item).catch(report) });
-  }
-});
-Hooks.on("renderApplicationV2", (app, element) => insertButton(app, element));
-Hooks.on("renderItemSheet", (app, element) => insertButton(app, element));
-Hooks.on("dnd5e.postUseActivity", (activity) => {
-  const item = activity?.item;
-  if (item) sendRequest(item, activity, "use");
-});
-Hooks.on("dnd5e.postRollAttack", (rolls, data) => {
-  const activity = data?.subject;
-  const item = activity?.item;
-  const roll = rolls?.[0];
-  if (!item || !roll || usedRolls.has(roll)) return;
-  usedRolls.add(roll);
-  const die = roll.dice?.find(d => d.faces === 20);
-  const natural = die?.results?.find(r => r.active !== false && !r.discarded)?.result;
-  if (!Number.isFinite(roll.total) || !Number.isInteger(natural)) return;
-  sendRequest(item, activity, "hit", roll.total, natural);
-});
-Hooks.on("createActiveEffect", effect => { onNativeEffect(effect).catch(report); });
-Hooks.on("updateCombat", (combat, changed) => {
-  turnQueue = turnQueue.then(() => onCombatChange(combat, changed)).catch(report);
-});
+Hooks.on("preCreateActiveEffect", guardEffect);
+Hooks.on("preUpdateActiveEffect", guardEffect);
+Hooks.on("preDeleteActiveEffect", guardEffect);
+Hooks.on("preUpdateActor", guardActor);
+Hooks.on("preUpdateToken", guardToken);
+for (const name of ["createActiveEffect", "updateActiveEffect", "deleteActiveEffect"]) {
+  Hooks.on(name, effect => refreshViews(effect?.parent));
+}
+Hooks.on("updateActor", actor => refreshViews(actor));
+Hooks.on("closeTokenHUD", hideTooltip);

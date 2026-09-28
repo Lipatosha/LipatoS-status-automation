@@ -1,8 +1,8 @@
 {
   "id": "lipatos-status-automation",
-  "title": "LipatoS — Автоматизация состояний и эффектов",
-  "description": "Автоматическое применение настроенных состояний и периодических эффектов способностей, заклинаний и предметов: длительность по ходам, спасброски и типизированный урон.",
-  "version": "1.0.2",
+  "title": "LipatoS — Статусы",
+  "description": "Только ГМ управляет статусами и эффектами. Игроки видят свои активные состояния с полными русскоязычными описаниями при наведении.",
+  "version": "2.0.0",
   "authors": [
     {
       "name": "LipatoS",
@@ -32,7 +32,6 @@
   "styles": [
     "styles/module.css"
   ],
-  "socket": true,
   "url": "https://github.com/Lipatosha/LipatoS-status-automation",
   "manifest": "https://github.com/Lipatosha/LipatoS-status-automation/releases/latest/download/module.json",
   "download": "https://github.com/Lipatosha/LipatoS-status-automation/releases/latest/download/lipatos-status-automation.zip",

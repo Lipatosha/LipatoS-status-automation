@@ -1,10 +1,26 @@
-.lpsa-header { display: inline-flex; align-items: center; gap: .3rem; padding: .15rem .5rem; font-size: .8rem; flex: 0 0 auto; }
-.lpsa-header i { font-size: .85rem; }
-.lpsa-editor { display: grid; gap: .5rem; padding: .35rem .2rem; }
-.lpsa-field { display: grid; grid-template-columns: minmax(150px, 46%) minmax(0, 1fr); align-items: center; gap: .5rem .75rem; }
-.lpsa-field > span { font-weight: 600; }
-.lpsa-field > input:not([type="checkbox"]), .lpsa-field select { width: 100%; min-width: 0; }
-.lpsa-field input[type="checkbox"] { justify-self: start; }
-.lpsa-field small { grid-column: 2; color: var(--color-text-subtle, #999); }
-.lpsa-editor .notes { margin: .4rem 0 0; opacity: .8; }
-@media (max-width: 550px) { .lpsa-field { grid-template-columns: 1fr; } .lpsa-field small { grid-column: 1; } }
+/* Read-only status UI for players; no global styling of other modules. */
+.lpsa-status-button { display:flex; align-items:center; justify-content:center; flex-direction:column; gap:2px; min-width:58px; padding:4px; cursor:pointer; }
+.lpsa-status-button span { font-size:11px; line-height:1.1; font-weight:600; }
+.lpsa-hud-panel { position:fixed; z-index:120; width:min(320px,calc(100vw - 24px)); max-height:min(420px,calc(100vh - 24px)); overflow-y:auto; padding:10px; background:#171717; border:1px solid #655945; border-radius:7px; color:#e5e0d5; box-shadow:0 8px 28px #000b; }
+.lpsa-hud-panel[hidden],.lpsa-tooltip[hidden] { display:none!important; }
+.lpsa-status-view { padding:6px; color:var(--color-text-primary,#e8e3d8); }
+.lpsa-list-title { font-size:15px; font-weight:700; margin:0 0 8px; border-bottom:1px solid #6c6357; padding-bottom:5px; }
+.lpsa-list { list-style:none; margin:0; padding:0; display:grid; gap:5px; }
+.lpsa-empty { opacity:.75; margin:6px 0; }
+.lpsa-status-row { display:flex; align-items:center; gap:10px; min-height:43px; border:1px solid #65594570; border-radius:5px; padding:5px 7px; background:#ffffff08; cursor:help; outline:none; }
+.lpsa-status-row:hover,.lpsa-status-row:focus-visible { background:#ffffff14; border-color:#c49d64; }
+.lpsa-status-icon { flex:0 0 30px; height:30px; width:30px; object-fit:contain; }
+.lpsa-status-text { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.lpsa-status-text strong { overflow-wrap:anywhere; font-size:13px; }
+.lpsa-status-text small { font-size:11px; opacity:.8; }
+.lpsa-tooltip { position:fixed; z-index:10000; pointer-events:none; box-sizing:border-box; max-width:390px; width:min(390px,calc(100vw - 20px)); max-height:calc(100vh - 20px); overflow-y:auto; background:#191919; color:#ddd9d3; border:1px solid #675e51; border-radius:7px; box-shadow:0 7px 24px #000c; font-size:13px; line-height:1.4; }
+.lpsa-tooltip-header { display:flex; justify-content:space-between; align-items:center; gap:12px; border-bottom:1px solid #625c52; padding:12px 14px 8px; }
+.lpsa-tooltip-header strong { color:#f0e8da; font-size:19px; line-height:1.2; font-family:var(--font-h1,serif); }
+.lpsa-tooltip-header span { padding:2px 6px; border:1px solid #777; border-radius:3px; font-size:10px; }
+.lpsa-tooltip-body { padding:7px 14px 12px; overflow-wrap:anywhere; }
+.lpsa-tooltip-body ul { padding-left:18px; margin:0; }
+.lpsa-tooltip-body li { margin:4px 0; }
+.lpsa-tooltip-body p { margin:5px 0; }
+.lpsa-tooltip-body img { max-width:100%; }
+.lpsa-window { color:var(--color-text-primary); }
+.lpsa-sheet-button { padding:3px 8px; font-size:12px; }
