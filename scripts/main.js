@@ -245,9 +245,11 @@ function decorateHud(hud, supplied) {
   if (!root?.querySelector || !actor) return;
   if (root.querySelector(".lpsa-status-button")) return;
   const original = root.querySelector(
-    '[data-palette="effects"],[data-palette="status"],[data-palette="statuses"],' +
-    '[data-action="toggleEffects"],[data-action="toggleStatusEffects"],' +
-    '.control-icon[data-action="effects"],.control-icon[data-action="status"]'
+    'button[data-action="togglePalette"][data-palette="effects"],' +
+    'button[data-action="togglePalette"][data-palette="status"],' +
+    'button[data-action="togglePalette"][data-palette="statuses"],' +
+    'button[data-action="toggleEffects"],button[data-action="toggleStatusEffects"],' +
+    'button.control-icon[data-action="effects"],button.control-icon[data-action="status"]'
   );
   const button = document.createElement("button");
   button.type = "button";
