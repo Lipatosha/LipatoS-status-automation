@@ -189,8 +189,8 @@ async function applyRule(actor, item, rule, activityId) {
     : Array.isArray(conditionImmunities) && conditionImmunities.includes(rule.status);
   if (rule.status && immunity) {
     ui.notifications.info(actor.name + ": иммунитет к состоянию «" + rule.status + "».");
-    return;
   }
+  const safeStatus = immunity ? "" : rule.status;
   const combat = game.combat;
   const code = item.uuid + ":" + activityId;
   const existing = actor.effects.find(e => e.getFlag(ID, "state")?.sourceKey === code);
@@ -205,11 +205,11 @@ async function applyRule(actor, item, rule, activityId) {
     await existing.update({ disabled: false, ["flags." + ID + ".state"]: state });
     return;
   }
-  const status = statusInfo(rule.status);
+  const status = statusInfo(safeStatus);
   const name = rule.name || item.name;
   await actor.createEmbeddedDocuments("ActiveEffect", [{
     name, img: status?.img ?? status?.icon ?? item.img ?? "icons/svg/aura.svg",
-    origin: item.uuid, statuses: rule.status ? [rule.status] : [],
+    origin: item.uuid, statuses: safeStatus ? [safeStatus] : [],
     duration: {}, changes: [],
     flags: { [ID]: { state } }
   }]);
@@ -232,7 +232,8 @@ async function onNativeEffect(effect) {
   const data = cleanRule(rule);
   const status = data.status;
   const immunities = effect.parent.system?.traits?.ci?.value ?? [];
-  if (status && (immunities instanceof Set ? immunities.has(status) : Array.from(immunities).includes(status))) return;
+  const immune = status && (immunities instanceof Set ? immunities.has(status) :
+    (Array.isArray(immunities) ? immunities.includes(status) : false));
   const combat = game.combat;
   const state = {
     sourceKey: item.uuid + ":" + activityId, sourceActorUuid: item.actor.uuid,
@@ -242,7 +243,7 @@ async function onNativeEffect(effect) {
     combatId: combat?.id ?? null
   };
   const patch = { ["flags." + ID + ".state"]: state };
-  if (status && !effect.statuses?.has(status)) patch.statuses = [...(effect.statuses ?? []), status];
+  if (status && !immune && !effect.statuses?.has(status)) patch.statuses = [...(effect.statuses ?? []), status];
   await effect.update(patch);
 }
 
