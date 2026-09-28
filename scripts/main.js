@@ -40,7 +40,7 @@ function cleanRule(raw) {
   return {
     enabled: input.enabled === true || input.enabled === "true" || input.enabled === "on",
     name: String(input.name ?? "").trim().slice(0, 90),
-    trigger: input.trigger === "hit" ? "hit" : "use",
+    trigger: ["hit", "native"].includes(input.trigger) ? input.trigger : "use",
     status: statusInfo(input.status) ? input.status : "",
     rounds,
     timing: ["start", "end", "sourceStart", "sourceEnd"].includes(input.timing) ? input.timing : "start",
@@ -80,7 +80,7 @@ async function configureItem(item) {
     activityId = String(pick.activityId);
   }
   const old = item.getFlag(ID, "rules")?.[activityId] ?? {};
-  const rule = cleanRule({ rounds: 2, name: item.name, ...old });
+  const rule = cleanRule({ rounds: 2, name: item.name, prompt: true, ...old });
   const statusOptions = [option("", "Без состояния", rule.status)].concat(
     statuses().map(s => option(s.id, game.i18n.localize(s.name ?? s.label ?? s.id), rule.status))
   );
@@ -96,7 +96,8 @@ async function configureItem(item) {
     field("Название эффекта", text("name", rule.name)) +
     field("Условие наложения", select("trigger", [
       option("use", "При использовании действия (без проверки попадания)", rule.trigger),
-      option("hit", "После броска атаки при попадании", rule.trigger)
+      option("hit", "После броска атаки при попадании", rule.trigger),
+      option("native", "При штатном наложении эффекта D&D5e (с учётом спасброска)", rule.trigger)
     ]), "Для способностей со спасброском используй штатное применение эффекта либо режим при использовании.") +
     field("Состояние на цели", select("status", statusOptions)) +
     field("Количество срабатываний", text("rounds", rule.rounds, "number", 'min="1" max="1000"')) +
@@ -213,6 +214,38 @@ async function applyRule(actor, item, rule, activityId) {
     flags: { [ID]: { state } }
   }]);
 }
+
+async function onNativeEffect(effect) {
+  if (!isPrimaryGM() || effect.parent?.documentName !== "Actor" || effect.getFlag(ID, "state")) return;
+  const origin = effect.system?.origin ?? {};
+  const itemRef = origin.item || effect.origin;
+  if (!itemRef || typeof itemRef !== "string") return;
+  const resolved = await fromUuid(itemRef);
+  const item = resolved?.documentName === "Item" ? resolved : resolved?.item;
+  if (!item?.actor) return;
+  const activityRef = origin.activity;
+  const activityId = typeof activityRef === "string" ? activityRef.split(".").at(-1) : "default";
+  const rules = item.getFlag(ID, "rules") ?? {};
+  let rule = rules[activityId] ?? rules.default;
+  if (!rule && Object.keys(rules).length === 1) rule = Object.values(rules)[0];
+  if (!rule?.enabled || rule.trigger !== "native") return;
+  const data = cleanRule(rule);
+  const status = data.status;
+  const immunities = effect.parent.system?.traits?.ci?.value ?? [];
+  if (status && (immunities instanceof Set ? immunities.has(status) : Array.from(immunities).includes(status))) return;
+  const combat = game.combat;
+  const state = {
+    sourceKey: item.uuid + ":" + activityId, sourceActorUuid: item.actor.uuid,
+    sourceItemUuid: item.uuid, remaining: data.rounds, timing: data.timing,
+    formula: data.formula, damageType: data.damageType, saveAbility: data.saveAbility,
+    dc: data.dc, success: data.success, prompt: data.prompt, lastEdge: "",
+    combatId: combat?.id ?? null
+  };
+  const patch = { ["flags." + ID + ".state"]: state };
+  if (status && !effect.statuses?.has(status)) patch.statuses = [...(effect.statuses ?? []), status];
+  await effect.update(patch);
+}
+
 function actorOwner(actor) {
   return game.users.filter(u => u.active && !u.isGM && actor.testUserPermission(u, "OWNER"))
     .sort((a, b) => a.id.localeCompare(b.id))[0] ?? null;
@@ -381,6 +414,7 @@ Hooks.on("dnd5e.postRollAttack", (rolls, data) => {
   if (!Number.isFinite(roll.total) || !Number.isInteger(natural)) return;
   sendRequest(item, activity, "hit", roll.total, natural);
 });
+Hooks.on("createActiveEffect", effect => { onNativeEffect(effect).catch(report); });
 Hooks.on("updateCombat", (combat, changed) => {
   turnQueue = turnQueue.then(() => onCombatChange(combat, changed)).catch(report);
 });
