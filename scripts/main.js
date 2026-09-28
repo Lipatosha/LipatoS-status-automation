@@ -292,6 +292,64 @@ function toggleStatusPanel(hud, anchor = hud?._lpsaButton, active) {
   anchor.classList.add("active");
   placePanel(panel, anchor);
 }
+function gmStatusEntry(hud, statusId) {
+  if (!statusId) return null;
+  const actor = hud?.actor ?? hud?.object?.actor;
+  const effect = Array.from(actor?.effects ?? []).find(e =>
+    effectVisible(e) && Array.from(e.statuses ?? []).includes(statusId));
+  const info = conditionConfig(statusId);
+  return {
+    statusId,
+    name: localize(info.name ?? info.label ?? effect?.name ?? statusId),
+    img: info.img ?? info.icon ?? effect?.img ?? "",
+    effect: effect ?? null,
+    description: effect?.description ?? "",
+    source: effect?.name ?? ""
+  };
+}
+function decorateGMHud(hud, supplied) {
+  if (!game.user?.isGM) return;
+  const root = supplied?.jquery ? supplied[0] : supplied ?? hud.element;
+  if (!root?.addEventListener || root._lpsaGMTooltipBound) return;
+  // Event delegation also handles icons re-rendered when the native palette is opened.
+  // No click/contextmenu handlers or visual changes to the GM status grid.
+  root._lpsaGMTooltipBound = true;
+  const statusIcon = target => {
+    const icon = target?.closest?.("[data-status-id]");
+    return icon?.dataset?.statusId && root.contains(icon) ? icon : null;
+  };
+  root.addEventListener("mouseover", event => {
+    const icon = statusIcon(event.target);
+    if (!icon || root._lpsaHoveredStatus === icon) return;
+    root._lpsaHoveredStatus = icon;
+    const entry = gmStatusEntry(hud, icon.dataset.statusId);
+    if (entry) showTooltip(entry, event).catch(error => console.warn(ID, error));
+  });
+  root.addEventListener("mousemove", event => {
+    if (statusIcon(event.target) === root._lpsaHoveredStatus) positionTooltip(event);
+  });
+  root.addEventListener("mouseout", event => {
+    const icon = statusIcon(event.target);
+    if (icon !== root._lpsaHoveredStatus ||
+        (event.relatedTarget && icon?.contains(event.relatedTarget))) return;
+    root._lpsaHoveredStatus = null;
+    hideTooltip();
+  });
+  root.addEventListener("focusin", event => {
+    const icon = statusIcon(event.target);
+    if (!icon) return;
+    root._lpsaHoveredStatus = icon;
+    const entry = gmStatusEntry(hud, icon.dataset.statusId);
+    if (entry) showTooltip(entry, event).catch(error => console.warn(ID, error));
+  });
+  root.addEventListener("focusout", event => {
+    const icon = statusIcon(event.target);
+    if (icon !== root._lpsaHoveredStatus ||
+        (event.relatedTarget && icon?.contains(event.relatedTarget))) return;
+    root._lpsaHoveredStatus = null;
+    hideTooltip();
+  });
+}
 function decorateHud(hud, supplied) {
   if (!isPlayer()) return;
   const root = supplied?.jquery ? supplied[0] : supplied ?? hud.element;
@@ -443,11 +501,15 @@ Hooks.once("init", () => {
   if (module) module.api = { list: collectStatuses, open: openWindow };
 });
 Hooks.once("setup", installHud);
-Hooks.on("renderTokenHUD", (app, element) => decorateHud(app, element));
+Hooks.on("renderTokenHUD", (app, element) => {
+  if (game.user?.isGM) decorateGMHud(app, element);
+  else decorateHud(app, element);
+});
 Hooks.on("renderActorSheetV2", decorateSheet);
 Hooks.on("renderActorSheet", decorateSheet);
 Hooks.on("renderApplicationV2", (app, element) => {
   if (app.document?.documentName === "Actor") decorateSheet(app, element);
+  if (game.user?.isGM && app === globalThis.canvas?.tokens?.hud) decorateGMHud(app, element);
 });
 Hooks.on("preCreateActiveEffect", guardEffect);
 Hooks.on("preUpdateActiveEffect", guardEffect);

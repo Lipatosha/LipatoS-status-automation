@@ -13,7 +13,7 @@ const ctx = {console, CONFIG, game, Hooks:{
  once:(name,fn)=>{hooks[name]=fn;}, on:(name,fn)=>{hooks[name]=fn;}
 }};
 vm.createContext(ctx);
-vm.runInContext(fs.readFileSync("scripts/main.js","utf8") + "\nglobalThis.unit={collectStatuses,guardEffect,guardActor,guardToken,conditionName,isPlayer,decorateHud,toggleStatusPanel,statusDuration};",ctx);
+vm.runInContext(fs.readFileSync("scripts/main.js","utf8") + "\nglobalThis.unit={collectStatuses,guardEffect,guardActor,guardToken,conditionName,isPlayer,decorateHud,toggleStatusPanel,statusDuration,decorateGMHud,gmStatusEntry,rulesDescription};",ctx);
 const api=ctx.unit;
 const active={id:"1",name:"Сбит с ног",img:"prone.svg",statuses:new Set(["prone"]),disabled:false,duration:{label:"1 раунд"}};
 const disabled={id:"2",name:"Яд",statuses:new Set(["poisoned"]),disabled:true,duration:{}};
@@ -109,5 +109,37 @@ native.listeners.click({preventDefault:()=>prevented++,stopImmediatePropagation:
 assert.equal(body.children[0].hidden, true, "second click must close status panel");
 assert.equal(prevented, 2);
 assert.equal(stopped, 2);
+
+// GM palette: original grid and its click handlers stay untouched; tooltip is hover-only.
+game.user.isGM = true;
+const gmIcon = fakeElement("button");
+gmIcon.dataset = { statusId: "prone" };
+gmIcon.closest = selector => selector === "[data-status-id]" ? gmIcon : null;
+gmIcon.contains = node => node === gmIcon;
+gmIcon.listeners.click = () => "native toggle";
+gmIcon.listeners.contextmenu = () => "native context";
+const gmRoot = fakeElement("div");
+gmRoot.contains = node => node === gmIcon;
+const gmHud = { actor, element: gmRoot };
+api.decorateGMHud(gmHud, gmRoot);
+api.decorateGMHud(gmHud, gmRoot);
+assert.equal(gmRoot._lpsaGMTooltipBound, true);
+assert.equal(Object.keys(gmRoot.listeners).length, 5, "hover/focus events only");
+assert.equal(gmIcon.listeners.click(), "native toggle", "GM click must remain native");
+assert.equal(gmIcon.listeners.contextmenu(), "native context", "GM contextmenu must remain native");
+let hovered = null;
+let hides = 0;
+vm.runInContext("showTooltip = async (entry) => { globalThis.gmHovered = entry; }; hideTooltip = () => { globalThis.gmHides = (globalThis.gmHides || 0) + 1; };", ctx);
+gmRoot.listeners.mouseover({ target: gmIcon, clientX: 200, clientY: 100 });
+hovered = ctx.gmHovered;
+assert.equal(hovered.statusId, "prone", "hover must resolve the status id");
+assert.equal(hovered.name, "Распластанность");
+assert.equal(hovered.effect, active, "GM entry uses existing actor effect");
+gmRoot.listeners.mouseout({ target: gmIcon, relatedTarget: null });
+assert.equal(ctx.gmHides, 1, "tooltip closes when pointer leaves icon");
+gmRoot.listeners.focusin({ target: gmIcon });
+assert.equal(ctx.gmHovered.statusId, "prone", "keyboard focus also shows description");
+gmRoot.listeners.focusout({ target: gmIcon, relatedTarget: null });
+assert.equal(ctx.gmHides, 2, "tooltip closes after focus moves");
 assert.ok(!fs.readFileSync("scripts/main.js","utf8").includes("dnd5e.postUseActivity"));
-console.log("SMOKE TEST PASSED: active statuses, player locks, GM access, native icon, click opens/closes panel.");
+console.log("SMOKE TEST PASSED: player read-only HUD, GM native clicks, status hover and focus, permissions.");
