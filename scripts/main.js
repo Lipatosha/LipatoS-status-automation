@@ -3,6 +3,7 @@
  */
 const ID = "lipatos-status-automation";
 const views = new Set();
+const panels = new Set();
 const descriptions = new Map();
 const tooltip = { element: null, request: 0 };
 
@@ -236,48 +237,93 @@ function placePanel(panel, anchor) {
   const rect = anchor.getBoundingClientRect();
   const width = Math.min(320, window.innerWidth - 24);
   panel.style.left = Math.max(12, Math.min(rect.right + 8, window.innerWidth - width - 12)) + "px";
-  panel.style.top = Math.max(12, Math.min(rect.top, window.innerHeight - Math.min(panel.offsetHeight || 300, window.innerHeight - 24) - 12)) + "px";
+  panel.style.top = Math.max(12, Math.min(rect.top, window.innerHeight -
+    Math.min(panel.offsetHeight || 300, window.innerHeight - 24) - 12)) + "px";
+}
+function isEffectsPalette(palette) {
+  return /^(?:effects?|statuses?|statusEffects)$/i.test(String(palette ?? ""));
+}
+function nativeStatusButton(root) {
+  return root?.querySelector?.(
+    'button[data-action="togglePalette"][data-palette="effects"],' +
+    'button[data-action="togglePalette"][data-palette="statusEffects"],' +
+    'button[data-action="togglePalette"][data-palette="statuses"],' +
+    'button[data-action="toggleEffects"],button[data-action="toggleStatusEffects"]'
+  );
+}
+function closeStatusPanel(hud, remove = false) {
+  const panel = hud?._lpsaPanel;
+  if (!panel) return;
+  panel.hidden = true;
+  hud._lpsaButton?.classList?.remove("active");
+  hideTooltip();
+  if (remove) {
+    panel.remove();
+    panels.delete(panel);
+    hud._lpsaPanel = null;
+    hud._lpsaButton = null;
+  }
+}
+function toggleStatusPanel(hud, anchor = hud?._lpsaButton, active) {
+  if (!isPlayer() || !hud || !anchor) return;
+  const actor = hud.actor ?? hud.object?.actor;
+  if (!actor) return;
+  let panel = hud._lpsaPanel;
+  if (!panel || !panel.isConnected) {
+    panel = document.createElement("div");
+    panel.className = "lpsa-hud-panel";
+    panel.hidden = true;
+    document.body.append(panel);
+    hud._lpsaPanel = panel;
+    panels.add(panel);
+  }
+  const show = active === undefined ? panel.hidden : !!active;
+  if (!show) { closeStatusPanel(hud); return; }
+  const previous = panel.querySelector(".lpsa-status-view");
+  if (!previous || previous._lpsaActor?.uuid !== actor.uuid) {
+    panel.replaceChildren(viewElement(actor));
+  } else renderView(previous);
+  panel.hidden = false;
+  anchor.classList.add("active");
+  placePanel(panel, anchor);
 }
 function decorateHud(hud, supplied) {
   if (!isPlayer()) return;
   const root = supplied?.jquery ? supplied[0] : supplied ?? hud.element;
   const actor = hud.actor ?? hud.object?.actor;
   if (!root?.querySelector || !actor) return;
-  if (root.querySelector(".lpsa-status-button")) return;
-  const original = root.querySelector(
-    'button[data-action="togglePalette"][data-palette="effects"],' +
-    'button[data-action="togglePalette"][data-palette="status"],' +
-    'button[data-action="togglePalette"][data-palette="statuses"],' +
-    'button[data-action="toggleEffects"],button[data-action="toggleStatusEffects"],' +
-    'button.control-icon[data-action="effects"],button.control-icon[data-action="status"]'
-  );
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "lpsa-status-button control-icon";
+  const button = nativeStatusButton(root);
+  if (!button) return;
+  // Keep the original Foundry/D&D5e status icon, layout and palette action.
+  // Only change its tooltip and redirect a player's clicks to the read-only list.
+  button.classList.add("lpsa-status-control");
   button.setAttribute("aria-label", "Статусы");
   button.setAttribute("data-tooltip", "Статусы");
-  button.innerHTML = '<i class="fas fa-shield-heart" inert></i><span>Статусы</span>';
-  const panel = document.createElement("div");
-  panel.className = "lpsa-hud-panel";
-  panel.hidden = true;
-  panel.append(viewElement(actor));
-  button.addEventListener("click", event => {
-    event.preventDefault();
-    event.stopPropagation();
-    const show = panel.hidden;
-    panel.hidden = !show;
-    hideTooltip();
-    if (show) {
-      renderView(panel.querySelector(".lpsa-status-view"));
-      placePanel(panel, button);
-    }
-  });
-  button.addEventListener("contextmenu", event => event.preventDefault());
-  if (original) original.replaceWith(button);
-  else (root.querySelector(".col.right, .right") ?? root).append(button);
-  root.append(panel);
-  // The original palette is never an editor for a player, including alternate HUD bindings.
-  root.querySelectorAll(".status-effects").forEach(node => { node.hidden = true; });
+  button.setAttribute("data-tooltip-text", "Статусы");
+  button.title = "Статусы";
+  for (const node of [...button.childNodes]) {
+    if (node.nodeType === 3 && node.textContent.trim()) node.textContent = "";
+  }
+  button.querySelectorAll("span.label,span.title").forEach(el => { el.hidden = true; });
+  hud._lpsaButton = button;
+  if (!button._lpsaListener) {
+    button.addEventListener("click", event => {
+      if (!isPlayer()) return;
+      // Capture before the native palette handler so clicking stays usable.
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      toggleStatusPanel(hud, button);
+    }, true);
+    button.addEventListener("contextmenu", event => {
+      if (!isPlayer()) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, true);
+    button._lpsaListener = true;
+  }
+  // The stock assign-status palette is never exposed to a player.
+  root.querySelectorAll('.palette.status-effects,[data-palette="effects"].status-effects')
+    .forEach(node => { node.hidden = true; });
 }
 function installHud() {
   const Parent = CONFIG.Token?.hudClass;
@@ -304,14 +350,9 @@ function installHud() {
         status.isActive || this.actor?.statuses?.has(id)));
     }
     togglePalette(palette, active) {
-      if (isPlayer() && /effect|status/i.test(String(palette))) {
+      if (isPlayer() && isEffectsPalette(palette)) {
         decorateHud(this);
-        const button = this.element?.querySelector(".lpsa-status-button");
-        if (button && active !== false) button.click();
-        else if (active === false) {
-          const panel = this.element?.querySelector(".lpsa-hud-panel");
-          if (panel) panel.hidden = true;
-        }
+        toggleStatusPanel(this, this._lpsaButton, active);
         return;
       }
       return super.togglePalette(palette, active);
@@ -412,4 +453,23 @@ for (const name of ["createActiveEffect", "updateActiveEffect", "deleteActiveEff
   Hooks.on(name, effect => refreshViews(effect?.parent));
 }
 Hooks.on("updateActor", actor => refreshViews(actor));
-Hooks.on("closeTokenHUD", hideTooltip);
+Hooks.on("closeTokenHUD", hud => closeStatusPanel(hud, true));
+Hooks.once("ready", () => {
+  document.addEventListener("pointerdown", event => {
+    for (const panel of panels) {
+      if (!panel.isConnected) { panels.delete(panel); continue; }
+      if (panel.hidden || panel.contains(event.target)) continue;
+      const owner = canvas?.tokens?.hud;
+      if (owner?._lpsaPanel === panel) {
+        if (!owner._lpsaButton?.contains(event.target)) closeStatusPanel(owner);
+      } else {
+        panel.hidden = true;
+      }
+    }
+  }, true);
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+      closeStatusPanel(canvas?.tokens?.hud);
+    }
+  });
+});

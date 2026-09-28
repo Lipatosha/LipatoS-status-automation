@@ -1,7 +1,7 @@
 /* Read-only status UI for players; no global styling of other modules. */
-.lpsa-status-button { display:flex; align-items:center; justify-content:center; flex-direction:column; gap:2px; min-width:58px; padding:4px; cursor:pointer; }
-.lpsa-status-button span { font-size:11px; line-height:1.1; font-weight:600; }
-.lpsa-hud-panel { position:fixed; z-index:120; width:min(320px,calc(100vw - 24px)); max-height:min(420px,calc(100vh - 24px)); overflow-y:auto; padding:10px; background:#171717; border:1px solid #655945; border-radius:7px; color:#e5e0d5; box-shadow:0 8px 28px #000b; }
+.lpsa-status-control { cursor:pointer; pointer-events:auto; }
+.lpsa-status-control span.label,.lpsa-status-control span.title { display:none!important; }
+.lpsa-hud-panel { position:fixed; z-index:1050; pointer-events:auto; width:min(320px,calc(100vw - 24px)); max-height:min(420px,calc(100vh - 24px)); overflow-y:auto; padding:10px; background:#171717; border:1px solid #655945; border-radius:7px; color:#e5e0d5; box-shadow:0 8px 28px #000b; }
 .lpsa-hud-panel[hidden],.lpsa-tooltip[hidden] { display:none!important; }
 .lpsa-status-view { padding:6px; color:var(--color-text-primary,#e8e3d8); }
 .lpsa-list-title { font-size:15px; font-weight:700; margin:0 0 8px; border-bottom:1px solid #6c6357; padding-bottom:5px; }

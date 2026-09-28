@@ -39,5 +39,14 @@ assert.equal(api.guardActor(actor,{effects:[]}),undefined);
 assert.equal(api.guardToken({},{"overlayEffect":"skull.svg"}),undefined);
 assert.equal(api.isPlayer(),false);
 assert.ok(hooks.renderTokenHUD && hooks.renderActorSheetV2 && hooks.preDeleteActiveEffect);
+assert.equal(api.isEffectsPalette?.("effects"), undefined); // Optional exposure checked below.
+const source = fs.readFileSync("scripts/main.js", "utf8");
+assert.ok(source.includes("function nativeStatusButton(root)"));
+assert.ok(source.includes('event.stopImmediatePropagation()'));
+assert.ok(source.includes('toggleStatusPanel(hud, button)'));
+assert.ok(!source.includes("original.replaceWith(button)"), "native icon/control must remain");
+assert.ok(!source.includes("fa-shield-heart"), "custom replacement icon removed");
+assert.ok(!source.includes("<span>Статусы</span>"), "no permanent HUD label");
+
 assert.ok(!fs.readFileSync("scripts/main.js","utf8").includes("dnd5e.postUseActivity"));
 console.log("SMOKE TEST PASSED: active status list, hidden/disabled, locks, GM access, hooks.");
