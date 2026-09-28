@@ -13,8 +13,20 @@ const ctx = {console, CONFIG, game, Hooks:{
  once:(name,fn)=>{hooks[name]=fn;}, on:(name,fn)=>{hooks[name]=fn;}
 }};
 vm.createContext(ctx);
-vm.runInContext(fs.readFileSync("scripts/main.js","utf8") + "\nglobalThis.unit={collectStatuses,guardEffect,guardActor,guardToken,conditionName,isPlayer,decorateHud,toggleStatusPanel,statusDuration,decorateGMHud,gmStatusEntry,rulesDescription};",ctx);
+vm.runInContext(fs.readFileSync("scripts/main.js","utf8") + "\nglobalThis.unit={collectStatuses,guardEffect,guardActor,guardToken,conditionName,isPlayer,decorateHud,toggleStatusPanel,statusDuration,decorateGMHud,gmStatusEntry,rulesDescription,STATUS_RULES,suppressNativeStatusTooltip};",ctx);
 const api=ctx.unit;
+const SYSTEM_STATUS_IDS=["bleeding","blinded","burning","charmed","cursed","dehydration","deafened","diseased","exhaustion","falling","frightened","grappled","incapacitated","invisible","malnutrition","paralyzed","petrified","poisoned","prone","restrained","silenced","stunned","suffocation","surprised","transformed","unconscious","burrowing","concentrating","coverHalf","coverThreeQuarters","coverTotal","dead","dodging","ethereal","flying","hiding","hovering","marked","sleeping","stable"];
+assert.equal(Object.keys(api.STATUS_RULES).length, SYSTEM_STATUS_IDS.length, "all D&D5e status types covered");
+for (const id of SYSTEM_STATUS_IDS) {
+  assert.ok(api.STATUS_RULES[id]?.name, "missing Russian name: " + id);
+  assert.ok(api.STATUS_RULES[id]?.bullets?.length, "missing description: " + id);
+  assert.ok(api.STATUS_RULES[id].bullets.every(text => /[А-Яа-яЁё]/.test(text)), "non-Russian description: " + id);
+}
+assert.match(api.STATUS_RULES.suffocation.bullets.join(" "), /Телосложения/);
+assert.match(api.STATUS_RULES.bleeding.bullets.join(" "), /урон/);
+assert.match(api.STATUS_RULES.exhaustion.bullets.join(" "), /Legacy 2014/);
+assert.equal(api.STATUS_RULES.coverThreeQuarters.bullets[0].includes("+5"),true);
+
 const active={id:"1",name:"Сбит с ног",img:"prone.svg",statuses:new Set(["prone"]),disabled:false,duration:{label:"1 раунд"}};
 const disabled={id:"2",name:"Яд",statuses:new Set(["poisoned"]),disabled:true,duration:{}};
 const buff={id:"3",name:"Благословение",img:"bless.svg",statuses:new Set(),disabled:false,duration:{}};
@@ -124,6 +136,16 @@ const gmHud = { actor, element: gmRoot };
 api.decorateGMHud(gmHud, gmRoot);
 api.decorateGMHud(gmHud, gmRoot);
 assert.equal(gmRoot._lpsaGMTooltipBound, true);
+gmIcon.hasAttribute = name => ["data-tooltip","title"].includes(name) && !!gmIcon[name];
+gmIcon.removeAttribute = name => { delete gmIcon[name]; };
+gmIcon["data-tooltip"] = "Без сознания";
+gmIcon.title = "Без сознания";
+api.suppressNativeStatusTooltip(gmIcon);
+assert.equal(gmIcon["data-tooltip"],undefined,"stock name-only tooltip disabled");
+assert.equal(gmIcon.title,undefined,"browser title tooltip disabled");
+assert.equal(gmIcon.dataset.statusId,"prone","native status identity untouched");
+assert.equal(gmIcon.listeners.click(),"native toggle","native left-click intact");
+assert.equal(gmRoot._lpsaGMTooltipBound, true);
 assert.equal(Object.keys(gmRoot.listeners).length, 5, "hover/focus events only");
 assert.equal(gmIcon.listeners.click(), "native toggle", "GM click must remain native");
 assert.equal(gmIcon.listeners.contextmenu(), "native context", "GM contextmenu must remain native");
@@ -142,4 +164,14 @@ assert.equal(ctx.gmHovered.statusId, "prone", "keyboard focus also shows descrip
 gmRoot.listeners.focusout({ target: gmIcon, relatedTarget: null });
 assert.equal(ctx.gmHides, 2, "tooltip closes after focus moves");
 assert.ok(!fs.readFileSync("scripts/main.js","utf8").includes("dnd5e.postUseActivity"));
-console.log("SMOKE TEST PASSED: player read-only HUD, GM native clicks, status hover and focus, permissions.");
+Promise.all([
+  api.rulesDescription({ statusId:"suffocation", description:"English text" }),
+  api.rulesDescription({ statusId:"bleeding", description:"" }),
+  api.rulesDescription({ statusId:"prone", description:"English text" })
+]).then(results => {
+  for (const html of results) {
+    assert.match(html, /[А-Яа-яЁё]/,"all standard descriptions are Russian");
+    assert.doesNotMatch(html,/Описание отсутствует|English text/);
+  }
+  console.log("SMOKE TEST PASSED: all 40 Russian status descriptions, no duplicate name tooltip, GM actions, player locks.");
+}).catch(error => { console.error(error); process.exitCode = 1; });

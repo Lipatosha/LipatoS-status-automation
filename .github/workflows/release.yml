@@ -21,7 +21,7 @@ jobs:
       - name: Validate
         run: |
           node --check scripts/main.js
-          node -e 'const m=require("./module.json"); if(m.id!=="lipatos-status-automation"||m.version!=="2.0.3")process.exit(1);'
+          node -e 'const m=require("./module.json"); if(m.id!=="lipatos-status-automation"||m.version!=="2.1.0")process.exit(1);'
           node tests/smoke.cjs
       - name: Build
         run: zip -q -r lipatos-status-automation.zip module.json scripts styles README.md CHANGELOG.md
