@@ -13,7 +13,7 @@ const ctx = {console, CONFIG, game, Hooks:{
  once:(name,fn)=>{hooks[name]=fn;}, on:(name,fn)=>{hooks[name]=fn;}
 }};
 vm.createContext(ctx);
-vm.runInContext(fs.readFileSync("scripts/main.js","utf8") + "\nglobalThis.unit={collectStatuses,guardEffect,guardActor,guardToken,conditionName,isPlayer};",ctx);
+vm.runInContext(fs.readFileSync("scripts/main.js","utf8") + "\nglobalThis.unit={collectStatuses,guardEffect,guardActor,guardToken,conditionName,isPlayer,decorateHud,toggleStatusPanel};",ctx);
 const api=ctx.unit;
 const active={id:"1",name:"Сбит с ног",img:"prone.svg",statuses:new Set(["prone"]),disabled:false,duration:{label:"1 раунд"}};
 const disabled={id:"2",name:"Яд",statuses:new Set(["poisoned"]),disabled:true,duration:{}};
@@ -48,5 +48,61 @@ assert.ok(!source.includes("original.replaceWith(button)"), "native icon/control
 assert.ok(!source.includes("fa-shield-heart"), "custom replacement icon removed");
 assert.ok(!source.includes("<span>Статусы</span>"), "no permanent HUD label");
 
+// Simulated native HUD: clicking must keep the stock icon and open the read-only panel.
+function fakeElement(tag) {
+  const children = [];
+  const listeners = {};
+  const classes = new Set();
+  const el = {
+    tag, children, listeners, style: {}, hidden: false, isConnected: false,
+    className: "", childNodes: [],
+    classList: { add: name => classes.add(name), remove: name => classes.delete(name), contains: name => classes.has(name) },
+    setAttribute(name, value) { this[name] = value; },
+    addEventListener(name, callback) { listeners[name] = callback; },
+    querySelectorAll() { return []; },
+    querySelector(selector) {
+      if (selector === ".lpsa-status-view") return this.children.find(c => c.className === "lpsa-status-view") ?? null;
+      return null;
+    },
+    append(...nodes) {
+      for (const n of nodes) { n.isConnected = this.isConnected; this.children.push(n); }
+    },
+    replaceChildren(...nodes) {
+      this.children.length = 0;
+      this.append(...nodes);
+    },
+    getBoundingClientRect: () => ({ top: 10, right: 60 }),
+    offsetHeight: 100
+  };
+  return el;
+}
+const body = fakeElement("body");
+body.isConnected = true;
+const icon = fakeElement("img");
+const native = fakeElement("button");
+native.childNodes = [icon];
+const hudRoot = fakeElement("div");
+hudRoot.querySelector = selector => selector.includes('button[data-action="togglePalette"]') ? native : null;
+ctx.document = { body, createElement: fakeElement };
+ctx.window = { innerWidth: 1280, innerHeight: 800 };
+game.user.isGM = false;
+const hud = { actor, element: hudRoot };
+api.decorateHud(hud, hudRoot);
+assert.equal(native.childNodes[0], icon, "original Foundry status icon must remain unchanged");
+assert.equal(native.title, "Статусы", "status label belongs in hover text");
+assert.equal(hud._lpsaButton, native);
+assert.equal(body.children.length, 0, "no panel is created before click");
+let prevented = 0;
+let stopped = 0;
+native.listeners.click({preventDefault:()=>prevented++,stopImmediatePropagation:()=>stopped++});
+assert.equal(prevented, 1);
+assert.equal(stopped, 1);
+assert.equal(body.children.length, 1);
+assert.equal(body.children[0].hidden, false, "native button must open status panel");
+assert.equal(body.children[0].children[0].className, "lpsa-status-view");
+native.listeners.click({preventDefault:()=>prevented++,stopImmediatePropagation:()=>stopped++});
+assert.equal(body.children[0].hidden, true, "second click must close status panel");
+assert.equal(prevented, 2);
+assert.equal(stopped, 2);
 assert.ok(!fs.readFileSync("scripts/main.js","utf8").includes("dnd5e.postUseActivity"));
-console.log("SMOKE TEST PASSED: active status list, hidden/disabled, locks, GM access, hooks.");
+console.log("SMOKE TEST PASSED: active statuses, player locks, GM access, native icon, click opens/closes panel.");
