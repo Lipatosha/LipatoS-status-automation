@@ -43,6 +43,8 @@ assert.equal(api.statusDuration({duration:{label:"2 раунда"}}),"2 раун
 assert.equal(api.statusDuration({getDurationParts:()=>["1 раунд","до конца хода"],duration:{}}),"1 раунд · до конца хода");
 
 assert.equal(api.guardEffect({parent:actor}),false);
+assert.equal(api.guardEffect({parent:actor,statuses:new Set(["prone"])}),false);
+assert.equal(api.guardEffect({parent:actor,statuses:new Set(["falling"])}),undefined, "D&D5e automatic falling status is allowed");
 assert.equal(api.guardEffect({parent:{documentName:"Item"}}),undefined);
 assert.equal(api.guardActor(actor,{effects:[]}),false);
 assert.equal(api.guardActor(actor,{"effects.0.disabled":true}),false);
