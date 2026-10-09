@@ -21,7 +21,7 @@ jobs:
       - name: Validate
         run: |
           node --check scripts/main.js
-          node -e 'const m=require("./module.json"); if(m.id!=="lipatos-status-automation"||m.version!=="2.1.0")process.exit(1);'
+          node -e 'const m=require("./module.json"); if(m.id!=="lipatos-status-automation"||m.version!=="2.1.1")process.exit(1);'
           node tests/smoke.cjs
       - name: Build
         run: zip -q -r lipatos-status-automation.zip module.json scripts styles README.md CHANGELOG.md
@@ -37,5 +37,5 @@ jobs:
             gh release create "$TAG" lipatos-status-automation.zip module.json \
               --target "$GITHUB_SHA" \
               --title "LipatoS — Статусы $TAG" \
-              --notes "Foundry VTT 14 / D&D5e 6.0.5. Статусы только для чтения у игроков, подсказки правил, полный контроль ГМ."
+              --notes "Foundry VTT 14 / D&D5e 6.0.6. Статусы только для чтения у игроков, подсказки правил, полный контроль ГМ."
           fi
