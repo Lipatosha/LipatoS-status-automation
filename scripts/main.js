@@ -1,4 +1,4 @@
-/* LipatoS — Статусы | Foundry VTT 14 / dnd5e 6.0.5
+/* LipatoS — Статусы | Foundry VTT 14 / dnd5e 6.0.6
  * Read-only player status viewer. All GM controls stay native.
  */
 const ID = "lipatos-status-automation";
@@ -542,7 +542,15 @@ function openWindow(actor) {
 function guardEffect(effect) {
   if (!isPlayer()) return;
   // Actor effects are GM-managed; non-actor item effects are not touched.
-  if (effect?.parent?.documentName === "Actor") return false;
+  if (effect?.parent?.documentName !== "Actor") return;
+
+  // D&D5e 6.0.6 автоматически создаёт и снимает псевдостатус falling
+  // при движении токена. Он не доступен игроку как обычный ручной выбор
+  // в нашей панели, поэтому штатную механику падения не блокируем.
+  const statuses = Array.from(effect?.statuses ?? []);
+  if (statuses.length === 1 && statuses[0] === "falling") return;
+
+  return false;
 }
 function guardActor(actor, changes) {
   if (!isPlayer()) return;
